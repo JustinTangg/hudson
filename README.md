@@ -1,3 +1,13 @@
+to build: g++ -std=c++11 main.cpp -o csv
+
+NOTE:
+
+Tested with:
+
+-Apple LLVM version 6.1.0 (clang-602.0.49) (based on LLVM 3.6.0svn)
+-Target: x86_64-apple-darwin14.1.0
+
+
 usage: cat file.csv | ./csv <options>
  where <options> may include any/all of: 
        -cols n_1 n_2 n_3 n_4 (where n_{1,2,3,4} are valid column indices)
@@ -16,3 +26,4 @@ usage: cat file.csv | ./csv <options>
 
 NOTE: This command line tool expects csv input from stdin, so this documentation expects that you are running it
 on a UNIX-like system where 'a | b'  means send std out from 'a' to stdin of 'b'.
+
