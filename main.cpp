@@ -1,3 +1,4 @@
+#include <fstream>
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -126,6 +127,27 @@ int median(vector<int>& v) {
   return v[v.size()/2];
 }
 
+void print_row(const vector<string>& row, const set<int>& included_columns, const vector<int>& max_widths) {
+  for(int i = 0; i < row.size(); ++i) {
+    
+    if(included_columns.empty() or included_columns.count(i) > 0) {
+      cout << '|' << setw(max_widths[i]+1) << row[i] << " ";
+    }
+    
+  }
+  cout << '|' << endl;
+}
+
+void print_join_row(const pair<string, int>& item,
+		    const vector<string>& row,
+		    const vector<vector<string> >& join_rows,
+		    const set<int>& included_columns,
+		    const vector<int>& max_widths) {
+  vector<string> final_row(row);
+  copy(join_rows[item.second].begin(), join_rows[item.second].end(), back_inserter(final_row));
+  print_row(final_row, included_columns, max_widths);
+}
+
 int main(int argc, char** argv) {
 
   char separator = ',';
@@ -169,6 +191,48 @@ int main(int argc, char** argv) {
   if(arg_types.count("-aggcol")) {
     agg_expr = {arg_types["-aggcol"].sub_args[0],
 		stoi(arg_types["-aggcol"].sub_args[1])};
+  }
+
+  vector<int> join_max_widths;
+  vector<vector<string> > join_rows;
+  multimap<string, int> join_columns;
+  int join_column_index = -1;
+  string join_type;
+  if(arg_types.count("-outerjoin") > 0 or arg_types.count("-innerjoin") > 0) {
+
+    join_type = arg_types.count("-outerjoin") ? "-outerjoin" : "-innerjoin";
+    join_column_index = stoi(arg_types[join_type].sub_args[0]);
+    ifstream fin(arg_types[join_type].sub_args[1].c_str());
+
+    string current_line;
+    int count = 0;
+    while(getline(fin, current_line)) {
+
+      vector<string> tokenized_row(tokenize(current_line, separator));
+
+      if(join_column_index < tokenized_row.size()) {
+	join_columns.insert(make_pair(tokenized_row[join_column_index], count));
+      }
+
+      for(int i = 0; i < tokenized_row.size(); ++i) {
+
+	int width = tokenized_row[i].size();
+
+	if(i >= join_max_widths.size()) {
+	  join_max_widths.push_back(width);
+	} else if(width > join_max_widths[i]) {
+	  join_max_widths[i] = width;
+	}
+
+      }
+
+      join_rows.push_back(tokenized_row);
+      ++count;
+
+    }
+
+    fin.close();
+
   }
 
   string current_line;
@@ -231,14 +295,42 @@ int main(int argc, char** argv) {
 
   }
 
+  set<int> joined_rows;
+  vector<int> extended_max_widths(max_widths);
+  copy(join_max_widths.begin(), join_max_widths.end(), back_inserter(extended_max_widths));
   for(const vector<string>& row: rows) {
-    for(int i = 0; i < row.size(); ++i) {
-      if(included_columns.empty() or included_columns.count(i) > 0) {
-	cout << '|' << setw(max_widths[i]+1) << row[i] << " ";
+
+    int join_count = join_columns.count(row[join_column_index]);
+
+    if(join_column_index < 0 or (join_count == 0 and join_type == "-outerjoin")) {
+
+      print_row(row, included_columns, max_widths);
+
+    }
+
+    if(join_column_index >= 0 and join_count > 0) {
+
+      auto eq_range = join_columns.equal_range(row[join_column_index]);
+      for_each(eq_range.first, eq_range.second, bind(&print_join_row, _1, row, join_rows, included_columns, extended_max_widths));
+      transform(eq_range.first,
+		eq_range.second,
+		inserter(joined_rows, joined_rows.begin()),
+		[](const pair<string, int>& p) { return p.second; });
+
+    }
+
+  }
+
+  if(join_column_index >= 0 and join_type == "-outerjoin") {
+    for(int i = 0; i < join_rows.size(); ++i) {
+      if(joined_rows.count(i) == 0) {
+	vector<string> extended_row(max_widths.size());
+	copy(join_rows[i].begin(), join_rows[i].end(), back_inserter(extended_row));
+	print_row(extended_row, included_columns, extended_max_widths);
       }
     }
-    cout << '|' << endl;
   }
+
   if(agg_operators.count(agg_expr.op) > 0) {
     cout << agg_expr.op << ": " << agg_operators.at(agg_expr.op)(accum_vec) << endl;
   }
