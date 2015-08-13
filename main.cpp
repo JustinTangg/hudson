@@ -138,14 +138,52 @@ void print_row(const vector<string>& row, const set<int>& included_columns, cons
   cout << '|' << endl;
 }
 
-void print_join_row(const pair<string, int>& item,
-		    const vector<string>& row,
-		    const vector<vector<string> >& join_rows,
-		    const set<int>& included_columns,
-		    const vector<int>& max_widths) {
-  vector<string> final_row(row);
-  copy(join_rows[item.second].begin(), join_rows[item.second].end(), back_inserter(final_row));
-  print_row(final_row, included_columns, max_widths);
+void inner_join(const vector<string>& row,
+		const vector<vector<string> >& join_rows,
+		int join_column_index,
+		const multimap<string, int>& join_columns,
+		back_insert_iterator<vector<vector<string> > > out) {
+  
+  auto eq_range = join_columns.equal_range(row[join_column_index]);
+  transform(eq_range.first,
+	    eq_range.second,
+	    out,
+	    [&join_rows, &row](pair<string, int> p) {
+	      vector<string> joined_row;
+	      joined_row.insert(joined_row.begin(),
+				join_rows[p.second].begin(),
+				join_rows[p.second].end());
+	      joined_row.insert(joined_row.begin(),
+				row.begin(), row.end());
+	      return joined_row;
+	    });
+}
+
+void outer_join(const vector<string>& row,
+		const vector<vector<string> >& join_rows,
+		int join_column_index,
+		const multimap<string, int>& join_columns,
+		insert_iterator<set<int> > joined_rows_out,
+		back_insert_iterator<vector<vector<string> > > out) {
+  set<int> joined_rows;
+  if(join_columns.count(row[join_column_index]) == 0) {
+    *out++ = row;
+    return;
+  }
+  auto eq_range = join_columns.equal_range(row[join_column_index]);
+  transform(eq_range.first,
+	    eq_range.second,
+	    out,
+	    [&join_rows, &row, &joined_rows](pair<string, int> p) {
+	      vector<string> joined_row;
+	      joined_row.insert(joined_row.begin(),
+				join_rows[p.second].begin(),
+				join_rows[p.second].end());
+	      joined_row.insert(joined_row.begin(),
+				row.begin(), row.end());
+	      return joined_row;
+	    });
+  copy(joined_rows.begin(), joined_rows.end(), joined_rows_out);
 }
 
 int main(int argc, char** argv) {
@@ -172,6 +210,25 @@ int main(int argc, char** argv) {
       }
 
     }
+  }
+
+  if(arg_types.count("-h")) {
+    cout << "usage: cat file.csv | " << argv[0] << " <options>" << endl
+	 << " where <options> may include any/all of: " << endl
+	 << "       -cols n_1 n_2 n_3 n_4 (where n_{1,2,3,4} are valid column indices)" << endl
+	 << "       -addcol col_expr where col_expr is an expression consisting of:" << endl
+	 << "                             -colN where N is the column index" << endl
+	 << "                             -N where N is some integer" << endl 
+	 << "                             -OP where OP is a binary operator from {+, *, -, /}" << endl
+	 << "       -aggcol N {avg,med,min,max} where N is a valid column index " << endl
+	 << "                             avg - get average over column N" << endl
+	 << "                             med - get the median over column N" << endl
+	 << "                             min - get the min over column N" << endl
+	 << "                             max - get the max over column N" << endl
+	 << "       -innerjoin, -outerjoin N file.csv where N is a column index and file.csv is a csv file" << endl
+	 << "                             (inner or outer) join the rows from stdin with the rows in file.csv." << endl
+	 << "                             Joined rows' columns can be referenced in -aggcol,-addcol,and -cols expressions." << endl;
+    return 0;
   }
 
   if(arg_types.count("-cols")) {
@@ -282,8 +339,8 @@ int main(int argc, char** argv) {
 	  *max_widths.rbegin() = width;
 	}
 
-      } catch (const exception e) {
-	cerr << "warning: invalid column expression, skipping..." << endl;
+      } catch (const exception& e) {
+	cerr << "warning: invalid column expression: '" << e.what() << "', skipping..." << endl;
       }
     }
 
@@ -295,39 +352,113 @@ int main(int argc, char** argv) {
 
   }
 
-  set<int> joined_rows;
   vector<int> extended_max_widths(max_widths);
-  copy(join_max_widths.begin(), join_max_widths.end(), back_inserter(extended_max_widths));
-  for(const vector<string>& row: rows) {
+  vector<vector<string> > join_result;
 
-    int join_count = join_columns.count(row[join_column_index]);
-
-    if(join_column_index < 0 or (join_count == 0 and join_type == "-outerjoin")) {
-
-      print_row(row, included_columns, max_widths);
-
+  if(not join_rows.empty()) {
+    copy(join_max_widths.begin(), join_max_widths.end(), back_inserter(extended_max_widths));
+    if(join_type == "-outerjoin") {
+      set<int> joined_rows;
+      for_each(rows.begin(), rows.end(),
+	       bind(&outer_join,
+		    _1,
+		    join_rows,
+		    join_column_index,
+		    join_columns,
+		    inserter(joined_rows, joined_rows.begin()),
+		    back_inserter(join_result)));
+      for(int i = 0; i < join_rows.size(); ++i) {
+	if(joined_rows.count(i) == 0) {
+	  vector<string> left_null_row(max_widths.size());
+	  copy(join_rows[i].begin(), join_rows[i].end(), back_inserter(left_null_row));
+	  join_result.push_back(left_null_row);
+	}
+      }
+    } else if(join_type == "-innerjoin") {
+      for_each(rows.begin(), rows.end(),
+	       bind(&inner_join,
+		    _1,
+		    join_rows,
+		    join_column_index,
+		    join_columns,
+		    back_inserter(join_result)));
+    } else {
+      cerr << "no join type specified!" << endl;
+      return 1;
     }
-
-    if(join_column_index >= 0 and join_count > 0) {
-
-      auto eq_range = join_columns.equal_range(row[join_column_index]);
-      for_each(eq_range.first, eq_range.second, bind(&print_join_row, _1, row, join_rows, included_columns, extended_max_widths));
-      transform(eq_range.first,
-		eq_range.second,
-		inserter(joined_rows, joined_rows.begin()),
-		[](const pair<string, int>& p) { return p.second; });
-
-    }
-
   }
 
-  if(join_column_index >= 0 and join_type == "-outerjoin") {
-    for(int i = 0; i < join_rows.size(); ++i) {
-      if(joined_rows.count(i) == 0) {
-	vector<string> extended_row(max_widths.size());
-	copy(join_rows[i].begin(), join_rows[i].end(), back_inserter(extended_row));
-	print_row(extended_row, included_columns, extended_max_widths);
+  if(join_result.empty()) {
+    for(vector<string>& row: rows) {
+      if(expr.operands.size() == 2 and operators.count(expr.op) > 0) {
+	
+	try {
+	  
+	  int l_operand = get_operand_value(expr.operands[0], row);
+	  int r_operand = get_operand_value(expr.operands[1], row);
+	  string result = to_string(apply_operator(l_operand, r_operand, expr.op));
+	  row.push_back(result);
+	  
+	  int width = result.size();
+	  
+	  if(row.size() > max_widths.size()) {
+	    max_widths.push_back(width);
+	  } else if(width > *max_widths.rbegin()) {
+	    *max_widths.rbegin() = width;
+	  }
+	  
+	} catch (const exception& e) {
+	  cerr << "warning: invalid column expression: '" << e.what() << "', skipping..." << endl;
+	}
       }
+      
+      if(agg_operators.count(agg_expr.op) > 0 and agg_expr.index < row.size()) {
+	try {
+	  accum_vec.push_back(stoi(row[agg_expr.index]));
+	} catch(const exception& e) {
+	  cerr << "aggregate column value not integer for row." << endl;
+	}
+      }
+      
+    }
+    for(const vector<string>& row: rows) {
+      print_row(row, included_columns, max_widths);
+    }
+  } else {
+    for(vector<string>& row: join_result) {
+      if(expr.operands.size() == 2 and operators.count(expr.op) > 0) {
+	
+	try {
+	  
+	  int l_operand = get_operand_value(expr.operands[0], row);
+	  int r_operand = get_operand_value(expr.operands[1], row);
+	  string result = to_string(apply_operator(l_operand, r_operand, expr.op));
+	  row.push_back(result);
+	  
+	  int width = result.size();
+	  
+	  if(row.size() > extended_max_widths.size()) {
+	    extended_max_widths.push_back(width);
+	  } else if(width > *extended_max_widths.rbegin()) {
+	    *extended_max_widths.rbegin() = width;
+	  }
+	  
+	} catch (const exception& e) {
+	  cerr << "warning: invalid column expression: '" << e.what() << "', skipping..." << endl;
+	}
+      }
+      
+      if(agg_operators.count(agg_expr.op) > 0 and agg_expr.index < row.size()) {
+	try {
+	  accum_vec.push_back(stoi(row[agg_expr.index]));
+	} catch(const exception& e) {
+	  cerr << "aggregate column value not integer for row." << endl;
+	}
+      }
+      
+    }
+    for(const vector<string>& row: join_result) {
+      print_row(row, included_columns, extended_max_widths);
     }
   }
 
