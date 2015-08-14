@@ -1,4 +1,5 @@
 #include <fstream>
+#include <cstdio>
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -37,6 +38,7 @@ vector<string> tokenize (const string& row, const string& separators, bool keep_
 
   }
 
+  tokenized_row.shrink_to_fit();
   return tokenized_row;
 
 }
@@ -131,11 +133,12 @@ void print_row(const vector<string>& row, const set<int>& included_columns, cons
   for(int i = 0; i < row.size(); ++i) {
     
     if(included_columns.empty() or included_columns.count(i) > 0) {
-      cout << '|' << setw(max_widths[i]+1) << row[i] << " ";
+      string format_str = "|%" + to_string(max_widths[i]+1) + "s";
+      printf(format_str.c_str(), row[i].c_str());
     }
     
   }
-  cout << '|' << endl;
+  printf(" |\n");
 }
 
 void inner_join(const vector<string>& row,
@@ -144,18 +147,17 @@ void inner_join(const vector<string>& row,
 		const multimap<string, int>& join_columns,
 		back_insert_iterator<vector<vector<string> > > out) {
   
-  auto eq_range = join_columns.equal_range(row[join_column_index]);
+  const auto& eq_range = join_columns.equal_range(row[join_column_index]);
   transform(eq_range.first,
 	    eq_range.second,
 	    out,
-	    [&join_rows, &row](pair<string, int> p) {
+	    [&join_rows, &row](const pair<string, int>& p) {
 	      vector<string> joined_row;
-	      joined_row.insert(joined_row.begin(),
-				join_rows[p.second].begin(),
-				join_rows[p.second].end());
-	      joined_row.insert(joined_row.begin(),
-				row.begin(), row.end());
-	      return joined_row;
+	      move(join_rows[p.second].begin(),
+		   join_rows[p.second].end(),
+		   back_inserter(joined_row));
+	      move(row.begin(), row.end(), back_inserter(joined_row));
+	      return move(joined_row);
 	    });
 }
 
@@ -167,23 +169,23 @@ void outer_join(const vector<string>& row,
 		back_insert_iterator<vector<vector<string> > > out) {
   set<int> joined_rows;
   if(join_columns.count(row[join_column_index]) == 0) {
-    *out++ = row;
+    *out++ = move(row);
     return;
   }
   auto eq_range = join_columns.equal_range(row[join_column_index]);
   transform(eq_range.first,
 	    eq_range.second,
 	    out,
-	    [&join_rows, &row, &joined_rows](pair<string, int> p) {
+	    [&join_rows, &row, &joined_rows](const pair<string, int>& p) {
 	      vector<string> joined_row;
-	      joined_row.insert(joined_row.begin(),
-				join_rows[p.second].begin(),
-				join_rows[p.second].end());
-	      joined_row.insert(joined_row.begin(),
-				row.begin(), row.end());
-	      return joined_row;
+	      move(row.begin(), row.end(), back_inserter(joined_row));
+	      move(join_rows[p.second].begin(),
+		   join_rows[p.second].end(),
+		   back_inserter(joined_row));
+	      joined_rows.insert(p.second);
+	      return move(joined_row);
 	    });
-  copy(joined_rows.begin(), joined_rows.end(), joined_rows_out);
+  move(joined_rows.begin(), joined_rows.end(), joined_rows_out);
 }
 
 int main(int argc, char** argv) {
@@ -352,6 +354,8 @@ int main(int argc, char** argv) {
 
   }
 
+  rows.shrink_to_fit();
+
   vector<int> extended_max_widths(max_widths);
   vector<vector<string> > join_result;
 
@@ -386,7 +390,11 @@ int main(int argc, char** argv) {
       cerr << "no join type specified!" << endl;
       return 1;
     }
+    rows.clear();
+    join_rows.clear();
   }
+
+  join_result.shrink_to_fit();
 
   if(join_result.empty()) {
     for(vector<string>& row: rows) {
