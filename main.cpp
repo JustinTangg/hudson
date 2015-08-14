@@ -360,7 +360,7 @@ int main(int argc, char** argv) {
   vector<vector<string> > join_result;
 
   if(not join_rows.empty()) {
-    copy(join_max_widths.begin(), join_max_widths.end(), back_inserter(extended_max_widths));
+    move(join_max_widths.begin(), join_max_widths.end(), back_inserter(extended_max_widths));
     if(join_type == "-outerjoin") {
       set<int> joined_rows;
       for_each(rows.begin(), rows.end(),
@@ -374,7 +374,7 @@ int main(int argc, char** argv) {
       for(int i = 0; i < join_rows.size(); ++i) {
 	if(joined_rows.count(i) == 0) {
 	  vector<string> left_null_row(max_widths.size());
-	  copy(join_rows[i].begin(), join_rows[i].end(), back_inserter(left_null_row));
+	  move(join_rows[i].begin(), join_rows[i].end(), back_inserter(left_null_row));
 	  join_result.push_back(left_null_row);
 	}
       }
